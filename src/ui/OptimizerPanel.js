@@ -287,7 +287,10 @@ export class OptimizerPanel {
     const wrap = document.createElement('div');
     wrap.innerHTML = PANEL_HTML;
     this._el = wrap.firstElementChild;
-    document.body.appendChild(this._el);
+    // Mount inside #chart-shell when embedded in trading app modal,
+    // so the overlay stays scoped to the chart area instead of covering the whole page.
+    const container = document.getElementById('chart-shell') ?? document.body;
+    container.appendChild(this._el);
     this._mounted = true;
     this._bindEvents();
   }
