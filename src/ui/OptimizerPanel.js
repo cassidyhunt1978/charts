@@ -254,14 +254,11 @@ function getCuratedResults(optResult) {
     .slice() // copy
     .sort((a, b) => b.pf - a.pf);
 
-  // Return between 5..15 rows where available (panel should show a compact
-  // curated set). Keep up to 15 best entries but ensure at least 5 when
-  // present in the filtered pool.
-  const maxRows = 15;
-  const minRows = 5;
+  // Return up to 20 rows (user-visible curated table). Match JSON.detailed
+  // ordering (PF desc) and only apply light gating (PF > 0.05, trades >=3).
+  const maxRows = 20;
   if (filtered.length === 0) return [];
-  const take = Math.min(maxRows, Math.max(minRows, filtered.length));
-  return filtered.slice(0, take);
+  return filtered.slice(0, Math.min(maxRows, filtered.length));
 }
 
 // ─── OptimizerPanel class ─────────────────────────────────────────────────────
@@ -728,32 +725,35 @@ export class OptimizerPanel {
     const usingCurated = tableData.length > 0;
 
     // Fallback: if curation produced nothing, wrap raw topResults minimally
-    const displayData = usingCurated
-      ? tableData
-      : (result.topResults ?? []).slice(0, 10).map((r, i) => ({
-          rank:          i,
-          tf:            '1m',
-          dir:           r.strategy?.entry?.direction ?? '?',
-          conditions:    (r.strategy?.entry?.conditions ?? []).filter(c => c.enabled !== false).map(c => c.id),
-          pf:            r.stats?.profit_factor ?? 0,
-          win_rate:      r.stats?.win_rate ?? 0,
-          trade_count:   r.stats?.total ?? 0,
-          avg_rr:        r.stats?.avg_rr ?? 0,
-          net_pnl_usd:   r.stats?.net_pnl_usd ?? 0,
-          strategy:      r.strategy,
-          strategy_name: r.strategy?.meta?.name ?? r.strategy?.name ?? 'Unnamed',
-          is_pivot:      r.is_pivot ?? false,
-        }));
+        const displayData = usingCurated
+          ? tableData
+          : (result.topResults ?? []).slice(0, 10).map((r, i) => ({
+              rank:          i,
+              tf:            '1m',
+              dir:           r.strategy?.entry?.direction ?? '?',
+              conditions:    (r.strategy?.entry?.conditions ?? []).filter(c => c.enabled !== false).map(c => c.id),
+              pf:            r.stats?.profit_factor ?? 0,
+              win_rate:      r.stats?.win_rate ?? 0,
+              trade_count:   r.stats?.total ?? 0,
+              avg_rr:        r.stats?.avg_rr ?? 0,
+              net_pnl_usd:   r.stats?.net_pnl_usd ?? 0,
+              strategy:      r.strategy,
+              strategy_name: r.strategy?.meta?.name ?? r.strategy?.name ?? 'Unnamed',
+              is_pivot:      r.is_pivot ?? false,
+            }));
     // Apply a small diversity bias so strategies using VWAP/volume/ATR/BB/regime
     // get a slight boost in ordering when PFs are near-equal. This helps
     // surface structurally diverse strategies into the 5-15 curated rows.
-    const diversityIds = new Set(['price_above_vwap','price_below_vwap','volume_spike','atr_breakout','vol_expansion','bb_squeeze','regime_is']);
-    const biased = (displayData || []).slice().map(d => {
-      const conds = (d.conditions ?? []).slice(0, 8);
-      const divCnt = conds.filter(c => diversityIds.has(c)).length;
-      const bias = 1 + Math.min(0.20, 0.06 * divCnt); // up to +20% boost
-      return { _base: d, _bias: bias, _score: (d.pf ?? 0) * bias };
-    }).sort((a, b) => b._score - a._score).map(x => x._base);
+        const diversityIds = new Set(['price_above_vwap','price_below_vwap','volume_spike','atr_breakout','vol_expansion','bb_squeeze','regime_is','adx_above','ema_above_slow']);
+        const biased = (displayData || []).slice().map(d => {
+          const conds = (d.conditions ?? []).slice(0, 12);
+          const divCnt = conds.filter(c => diversityIds.has(c)).length;
+          const multBias = 1 + Math.min(0.30, 0.06 * divCnt); // multiplicative up to +30%
+          const addBonus = divCnt >= 2 ? 0.2 : 0.0; // additive PF boost
+          const basePf = (d.pf ?? 0) || 0;
+          const score = basePf * multBias + addBonus;
+          return { _base: d, _score: score, _divCnt: divCnt };
+        }).sort((a, b) => b._score - a._score).map(x => x._base);
 
     console.log('[OptimizerPanel._renderResults] tableData source:', usingCurated ? 'CURATED' : 'RAW topResults (fallback)', 'count:', biased.length);
     // User-requested diagnostics — confirm table is using curated, not raw data
