@@ -1,12 +1,15 @@
 /**
  * SignalsLayer.js — renders computed signal arrows + stop/target lines on chart
  * + a signal summary strip pinned to the top of the price pane
+ * + background strategy overlay signals from StrategyOverlay
  */
 export class SignalsLayer {
   draw(ctx, scene) {
-    const signals = scene.state?.computedSignals;
-    const trades  = scene.state?.computedTrades;
-    if (!signals?.length && !trades?.length) return;
+    const signals    = scene.state?.computedSignals;
+    const trades     = scene.state?.computedTrades;
+    const bgSignals  = scene.state?.bgStrategySignals;
+    const hasBg      = bgSignals?.length > 0;
+    if (!signals?.length && !trades?.length && !hasBg) return;
 
     const ps   = scene._priceScale;
     const pane = scene.panes?.price;
@@ -24,6 +27,44 @@ export class SignalsLayer {
     ctx.save();
     ctx.rect(pane.x, pane.y, pane.w, pane.h);
     ctx.clip();
+
+    // ── Background strategy overlay (from trading DB) ─────────────────────
+    if (hasBg) {
+      ctx.save();
+      for (const sig of bgSignals) {
+        if (sig.t < t0 || sig.t > t1) continue;
+        const x = ps.tToX(sig.t);
+        if (x < pane.x || x > pane.x + pane.w) continue;
+        const price  = sig.price;
+        if (price == null) continue;
+        const y      = ps.yToPix(price);
+        const isLong = sig.direction === "long";
+        const clr    = sig._colour ?? '#f59e0b';
+        const sz = 6, tip = 8, offset = 10;
+
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle   = clr;
+        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+        ctx.lineWidth   = 1;
+        ctx.beginPath();
+        if (isLong) {
+          const base = y + offset;
+          ctx.moveTo(x,      base);
+          ctx.lineTo(x - sz, base + tip);
+          ctx.lineTo(x + sz, base + tip);
+        } else {
+          const base = y - offset;
+          ctx.moveTo(x,      base);
+          ctx.lineTo(x - sz, base - tip);
+          ctx.lineTo(x + sz, base - tip);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
 
     // ── Draw stop/target zones for visible trades ─────────────────────────
     if (trades) {
@@ -254,6 +295,41 @@ export class SignalsLayer {
     }
 
     ctx.restore();
+
+    // ── Background strategy legend — only when bg signals present ─────────
+    if (hasBg) {
+      const seen = new Map();  // stratName → colour
+      for (const sig of bgSignals) {
+        if (sig.t >= t0 && sig.t <= t1 && sig._bgStrategy) {
+          seen.set(sig._bgStrategy, sig._colour ?? '#f59e0b');
+        }
+      }
+      if (seen.size) {
+        ctx.save();
+        ctx.font = '9px monospace';
+        ctx.textBaseline = 'middle';
+        const bgStripH = 16;
+        const bgStripY = pane.y + (visibleSigs.length ? 28 : 4);
+        let bx = pane.x + 6;
+        for (const [name, colour] of seen) {
+          const label = `◆ ${name.slice(0, 20)}`;
+          const lw    = ctx.measureText(label).width + 10;
+          if (bx + lw > pane.x + pane.w - 6) break;
+          ctx.globalAlpha   = 0.75;
+          ctx.fillStyle     = 'rgba(13,24,41,0.75)';
+          ctx.strokeStyle   = colour + '88';
+          ctx.lineWidth     = 1;
+          _roundRect(ctx, bx, bgStripY, lw, bgStripH, 4);
+          ctx.fill(); ctx.stroke();
+          ctx.fillStyle   = colour;
+          ctx.textAlign   = 'left';
+          ctx.fillText(label, bx + 5, bgStripY + bgStripH / 2);
+          ctx.globalAlpha = 1;
+          bx += lw + 4;
+        }
+        ctx.restore();
+      }
+    }
   }
 }
 

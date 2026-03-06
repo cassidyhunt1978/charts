@@ -88,6 +88,9 @@ export function createState() {
     alerts: [],
     // ── computed signals (SignalEngine output) ───────────────────────────
     computedSignals: [],   // [{id,t,price,direction,stop,target,rr,qty,...}]
+
+    // ── background strategy overlay signals (StrategyOverlay) ────────────
+    bgStrategySignals: [], // [{t,price,direction,_bgStrategy,_bgId,_colour}]
     computedTrades:  [],   // [{entryT,exitT,entryPrice,exitPrice,pnlUSD,...}]
     // ── streaming ────────────────────────────────────────────
     streaming: false,

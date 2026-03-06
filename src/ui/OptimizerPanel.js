@@ -206,6 +206,7 @@ const PANEL_HTML = `
             <button class="btn btn-accent" id="optExportJsonBtn">&#11015; Export JSON</button>
             <button class="btn btn-accent" id="optFullReportBtn">📋 Full Report</button>
             <button class="btn"            id="optSendToEditorBtn">↩ Send Best to Editor</button>
+            <button class="btn btn-success" id="optSendToTradingBtn" title="POST best strategy to trading app database">&#11014; Add to Trading App</button>
           </div>
 
         </div><!-- /optResultsContent -->
@@ -357,6 +358,7 @@ export class OptimizerPanel {
     el.querySelector('#optExportJsonBtn')?.addEventListener('click', () => this._exportJson());
     el.querySelector('#optFullReportBtn')?.addEventListener('click', () => this._runFullReport());
     el.querySelector('#optSendToEditorBtn')?.addEventListener('click', () => this._sendBestToEditor());
+    el.querySelector('#optSendToTradingBtn')?.addEventListener('click', () => this._sendToTradingApp());
 
     // Click on backdrop (outside inner panel) closes
     el.addEventListener('click', (e) => {
@@ -1041,6 +1043,30 @@ export class OptimizerPanel {
     } else {
       this._engine?.receiveStrategyFromOptimizer?.(best);
       this.hide();
+    }
+  }
+
+  async _sendToTradingApp() {
+    const best  = this._lastResult?.best;
+    const stats = this._lastResult?.topResults?.[0]?.stats ?? null;
+    if (!best) {
+      this._setHeaderSub('⚠ No result available — run optimizer first');
+      return;
+    }
+    const btn = this._el?.querySelector('#optSendToTradingBtn');
+    if (btn) btn.disabled = true;
+    this._setHeaderSub('Exporting to trading app…');
+    try {
+      if (typeof this._engine?._sendStrategyToTradingApp === 'function') {
+        await this._engine._sendStrategyToTradingApp(best, stats);
+        this._setHeaderSub('✓ Strategy added to trading app');
+      } else {
+        this._setHeaderSub('⚠ Engine export method not found');
+      }
+    } catch (err) {
+      this._setHeaderSub(`Export failed: ${err.message}`);
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 

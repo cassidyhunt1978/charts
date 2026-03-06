@@ -89,6 +89,7 @@ export class SignalRuleEditor {
     this.strategy  = null;   // set by engine after construction
     this.onRun      = null;   // callback: (strategy) => void
     this.onExport   = null;   // callback: (strategy, stats) => void
+    this.onExportToTradingApp = null;  // callback: (strategy, stats) => void
     this.onOptimize = null;   // callback: (strategy) => void  (async, results via showOptimizeResults)
     this.onCancel   = null;   // callback: () => void  — terminate active worker
     this.onGenerateReport = null; // callback: (opts) => void — trigger full report generation
@@ -322,7 +323,8 @@ export class SignalRuleEditor {
         <button id="sreGenReport" class="btn sre-opt-dl-report" title="Run full optimizer + backtest all TFs and pivot strategies, then download report">&#128202; Full Report</button>
         <button id="sreSendToOpt" class="btn sre-btn-sm sre-btn-accent2" title="Copy current strategy to the standalone Optimizer panel">&#8599; Send to Optimizer</button>
         <button id="sreClear"    class="btn btn-danger sre-btn-sm">Clear</button>
-        <button id="sreExport"   class="btn sre-btn-sm" disabled>&#11015; Export JSON</button>
+        <button id="sreExport"        class="btn sre-btn-sm" disabled>&#11015; Export JSON</button>
+        <button id="sreExportToApp"    class="btn sre-btn-sm" disabled title="Send to trading app database">&#11014; Add to App</button>
         <button id="sreImport"   class="btn sre-btn-sm">&#11014; Import JSON</button>
         <input  id="sreImportFile" type="file" accept=".json" style="display:none" />
       </div>
@@ -374,6 +376,10 @@ export class SignalRuleEditor {
 
     q("sreExport")?.addEventListener("click", () => {
       if (this._flush()) this.onExport?.(this.strategy, this._lastStats);
+    });
+
+    q("sreExportToApp")?.addEventListener("click", () => {
+      if (this._flush()) this.onExportToTradingApp?.(this.strategy, this._lastStats);
     });
 
     q("sreImport")?.addEventListener("click", () => q("sreImportFile")?.click());
@@ -513,6 +519,7 @@ export class SignalRuleEditor {
           <span class="sre-opt-kpi">${s.total}t</span>
           <button class="btn sre-opt-apply" data-idx="${i}">Apply</button>
           <button class="btn sre-opt-export" data-idx="${i}" title="Export strategy JSON — no need to Apply first">&#11015;</button>
+          <button class="btn sre-opt-export-app" data-idx="${i}" title="Send strategy to trading app database">&#11014; App</button>
         </div>
         ${feesBadge ? `<div class="sre-opt-card-fees">${feesBadge}</div>` : ""}
         <div class="sre-opt-diffs">${diffHtml}</div>
@@ -583,6 +590,17 @@ export class SignalRuleEditor {
         if (!chosen) return;
         // Export a deep-copy so callers cannot mutate the live result
         this.onExport?.(JSON.parse(JSON.stringify(chosen)), stats ?? {});
+      });
+    });
+
+    // Wire per-card "Add to Trading App" buttons
+    el.querySelectorAll(".sre-opt-export-app").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const idx    = +btn.dataset.idx;
+        const chosen = topResults[idx]?.strategy;
+        const stats  = topResults[idx]?.stats;
+        if (!chosen) return;
+        this.onExportToTradingApp?.(JSON.parse(JSON.stringify(chosen)), stats ?? {});
       });
     });
 
@@ -789,6 +807,8 @@ export class SignalRuleEditor {
       <div class="sre-stat-footer">${tradeCount} trades from ${sigCount} signals · ${stats.sl_pct}% stopped out · ${stats.exp_pct}% expired</div>
     `;
     if (exportBtn) exportBtn.disabled = false;
+    const exportToAppBtn = this._panel.querySelector("#sreExportToApp");
+    if (exportToAppBtn) exportToAppBtn.disabled = false;
   }
 
   /**

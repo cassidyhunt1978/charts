@@ -17,6 +17,7 @@ import { tfToMinutes }       from "../util/Aggregator.js";
 import { MTFPanel }          from "../ui/MTFPanel.js";
 import { RiskCalculator }    from "../ui/RiskCalculator.js";
 import { runSignalScan, defaultStrategy, exportStrategyJSON, computeTradeStats } from "../signals/SignalEngine.js";
+import { StrategyOverlay, exportStrategyToTradingApp } from "../strategies/StrategyOverlay.js";
 import { SignalRuleEditor }  from "../signals/SignalRuleEditor.js";
 import { optimizeStrategyAsync } from "../signals/SignalOptimizer.js";
 import { ReportGenerator }       from "../util/ReportGenerator.js";
@@ -132,6 +133,17 @@ export class Engine {
     const chartWrap2 = document.getElementById("chartWrap") ?? canvas.parentElement;
     this._optimizerPanel = new OptimizerPanel(this);
     this._optimizerPanel.onSendToEditor = (strategy) => this.receiveStrategyFromOptimizer(strategy);
+
+    // ── Background strategy overlay (loads saved strategies from trading DB) ─
+    this._strategyOverlay = new StrategyOverlay();
+    this._strategyOverlay.onUpdate = () => {
+      this.state.bgStrategySignals = this._strategyOverlay.getMergedSignals();
+      this.render();
+    };
+
+    // Wire up "send to trading app" callback on SignalRuleEditor
+    this.signalEditor.onExportToTradingApp = (strat, stats) =>
+      this._sendStrategyToTradingApp(strat, stats);
   }
 
   async start() {
@@ -292,6 +304,8 @@ export class Engine {
       if (wasStreaming) this.startStream();
       // Refresh MTF panel on new symbol
       if (this.state.mtfVisible) this.mtfPanel.refresh(this.state.rawBars);
+      // Background: load stored strategies and overlay their signals
+      this._runBackgroundStrategyLoad();
     } catch (err) {
       console.error("loadSymbol error:", err);
       this.setStatus(`Error loading ${symbol}: ${err.message}`);
@@ -904,6 +918,35 @@ export class Engine {
     a.click();
     URL.revokeObjectURL(url);
     this.setStatus(`Exported strategy JSON for ${strategy.meta.symbol} / ${strategy.meta.timeframe}`);
+  }
+
+  // ── Trading App Integration ────────────────────────────────────────────────
+
+  /** Fire-and-forget: load all saved strategies from trading DB onto current bars */
+  _runBackgroundStrategyLoad() {
+    const bars = this.data._all?.bars ?? this.state.bars;
+    if (!bars?.length) return;
+    // Clear stale signals immediately so old overlays don't hang around
+    this.state.bgStrategySignals = [];
+    this._strategyOverlay.load(bars).catch(err =>
+      console.warn('[Engine] Background strategy load failed:', err.message)
+    );
+  }
+
+  /** POST a strategy to the trading app DB; called from SignalRuleEditor + OptimizerPanel */
+  async _sendStrategyToTradingApp(strategy, stats) {
+    if (!strategy) return;
+    strategy.meta.symbol    = this.state.symbol;
+    strategy.meta.timeframe = this.state.timeframe;
+    this.setStatus('Exporting strategy to trading app…');
+    try {
+      const result = await exportStrategyToTradingApp(strategy, stats);
+      this.setStatus(`✓ Strategy added to trading app: ${strategy.meta.name ?? strategy.meta.symbol}`);
+      return result;
+    } catch (err) {
+      this.setStatus(`Export to trading app failed: ${err.message}`);
+      throw err;
+    }
   }
 
   _optimizeStrategy(strategy, extraOpts = {}) {
