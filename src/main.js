@@ -61,16 +61,20 @@ window._engine = engine;
 const symbolSelect = document.getElementById("symbolSelect");
 const daysSelect   = document.getElementById("daysSelect");
 
+// Read optional symbol from URL query string, e.g. /charts/?symbol=ETH
+const _urlSym = new URLSearchParams(window.location.search).get("symbol") || null;
+
 if (symbolSelect) {
   fetchSymbols()
     .then(symbols => {
       symbolSelect.innerHTML = "";
+      const preferredSym = _urlSym || "BTC";
       symbols.forEach(s => {
         const opt = document.createElement("option");
         opt.value       = s.symbol;
         opt.textContent = s.symbol;
         opt.title       = `${s.name} (${s.exchange})`;
-        if (s.symbol === "BTC") opt.selected = true;
+        if (s.symbol === preferredSym) opt.selected = true;
         symbolSelect.appendChild(opt);
       });
       // Always reload using the user's current days selection
