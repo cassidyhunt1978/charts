@@ -245,13 +245,23 @@ function getCuratedResults(optResult) {
 
   // Gate: exclude 1m entirely (always raw optimizer noise), require ≥3 trades,
   // PF > 0.05 (same as JSON.detailed).  No slice — caller decides row count.
-  return raw
+  const filtered = raw
     .filter(r =>
       r.tf !== '1m' &&
       (r.trade_count ?? r.trades ?? 0) >= 3 &&
       (r.pf ?? 0) > 0.05
     )
+    .slice() // copy
     .sort((a, b) => b.pf - a.pf);
+
+  // Return between 5..15 rows where available (panel should show a compact
+  // curated set). Keep up to 15 best entries but ensure at least 5 when
+  // present in the filtered pool.
+  const maxRows = 15;
+  const minRows = 5;
+  if (filtered.length === 0) return [];
+  const take = Math.min(maxRows, Math.max(minRows, filtered.length));
+  return filtered.slice(0, take);
 }
 
 // ─── OptimizerPanel class ─────────────────────────────────────────────────────
@@ -734,24 +744,51 @@ export class OptimizerPanel {
           strategy_name: r.strategy?.meta?.name ?? r.strategy?.name ?? 'Unnamed',
           is_pivot:      r.is_pivot ?? false,
         }));
+    // Apply a small diversity bias so strategies using VWAP/volume/ATR/BB/regime
+    // get a slight boost in ordering when PFs are near-equal. This helps
+    // surface structurally diverse strategies into the 5-15 curated rows.
+    const diversityIds = new Set(['price_above_vwap','price_below_vwap','volume_spike','atr_breakout','vol_expansion','bb_squeeze','regime_is']);
+    const biased = (displayData || []).slice().map(d => {
+      const conds = (d.conditions ?? []).slice(0, 8);
+      const divCnt = conds.filter(c => diversityIds.has(c)).length;
+      const bias = 1 + Math.min(0.20, 0.06 * divCnt); // up to +20% boost
+      return { _base: d, _bias: bias, _score: (d.pf ?? 0) * bias };
+    }).sort((a, b) => b._score - a._score).map(x => x._base);
 
-    console.log(
-      '[OptimizerPanel._renderResults] tableData source:', usingCurated ? 'CURATED' : 'RAW topResults (fallback)',
-      'count:', displayData?.length,
-      displayData
-    );
+    console.log('[OptimizerPanel._renderResults] tableData source:', usingCurated ? 'CURATED' : 'RAW topResults (fallback)', 'count:', biased.length);
     // User-requested diagnostics — confirm table is using curated, not raw data
     console.log('Table data source length:', displayData?.length);
     console.log('Is this curated? First row:', displayData?.[0]);
 
-    const rows = displayData.map((r, i) => {
+    const rows = biased.map((r, i) => {
       const pfN   = r.pf ?? 0;
       const pfVal = pfN ? pfN.toFixed(3) : '–';
       const pfCls = pfN >= 1.5 ? ' opt-pf-hi' : pfN >= 1.1 ? ' opt-pf-ok' : pfN > 0 && pfN < 1.0 ? ' opt-pf-lo' : '';
       // Prefer the descriptive strategy_name (built from meta.name by _buildStrategyName)
       // over raw condition IDs — gives readable "VWAP↑ + vol×1.8 + regime🐂" labels.
-      const rawIds  = (r.conditions ?? []).join(' + ');
-      const dispName = r.strategy_name && r.strategy_name !== 'Unnamed' ? r.strategy_name : rawIds || '–';
+      const rawIdsArr = (r.conditions ?? []);
+      const rawIds  = rawIdsArr.join(' + ');
+      // Prefer meaningful meta names; but if the name looks generic (MOCK/Unnamed)
+      // fallback to a constructed label from condition labels.
+      let dispName = r.strategy_name ?? '';
+      if (!dispName || /mock|unnamed|optimized/i.test(dispName)) {
+        // build human-friendly labels from the condition ids
+        const friendly = rawIdsArr.map(id => {
+          switch (id) {
+            case 'price_above_vwap': return 'VWAP↑';
+            case 'price_below_vwap': return 'VWAP↓';
+            case 'volume_spike': return 'vol×';
+            case 'ema_above_slow': return 'EMA↑';
+            case 'ema_below_slow': return 'EMA↓';
+            case 'atr_breakout': return 'ATR↑';
+            case 'vol_expansion': return 'volExp';
+            case 'bb_squeeze': return 'BB_sqz';
+            case 'regime_is': return 'regime';
+            default: return id;
+          }
+        }).slice(0,6);
+        dispName = friendly.join(' + ');
+      }
       // Show the full condition-ID list as a tooltip for debugging
       const titleTip = rawIds && rawIds !== dispName ? `${dispName} | conds: ${rawIds}` : dispName;
       const pivBadge = r.is_pivot
@@ -793,7 +830,7 @@ export class OptimizerPanel {
         </table>
         <div style="margin-top:4px;font-size:10px;color:#4a5580">
           ${usingCurated
-            ? `Curated high-quality results after gating &amp; pivots (raw noise hidden). 1m data excluded — all TFs are resampled.`
+            ? `Curated high-quality results after gating &amp; pivots — raw noise excluded`
             : `&#9888; Curated results unavailable — showing raw 1m optimizer combos.`}
           &nbsp;&#8595; Double-click a row for preview &amp; staging.
         </div>
@@ -940,10 +977,31 @@ export class OptimizerPanel {
     if (!this._lastResult) return;
     const sym  = this._engine?.state?.symbol ?? 'unknown';
     const tf   = this._engine?.state?.timeframe ?? '';
-    const blob = new Blob(
-      [JSON.stringify({ topResults: this._lastResult.topResults, passStats: this._lastResult.passStats }, null, 2)],
-      { type: 'application/json' }
-    );
+    // Prefer exporting the curated/detailed results (best for ensemble voters).
+    const curated = this._lastResult.detailed && this._lastResult.detailed.length > 0
+      ? this._lastResult.detailed
+      : (this._lastResult.curatedResults ?? []);
+
+    const exportPayload = {
+      exported_at: new Date().toISOString(),
+      symbol: sym,
+      base_tf: tf,
+      passStats: this._lastResult.passStats,
+      curated: curated.map(c => ({
+        tf: c.tf,
+        pf: c.pf,
+        win_rate: c.win_rate,
+        trade_count: c.trade_count,
+        avg_rr: c.avg_rr,
+        strategy_name: c.strategy_name,
+        strategy: c.strategy,           // full strategy JSON
+        backtest_summary: {
+          net_pnl_usd: c.net_pnl_usd,
+        }
+      })),
+    };
+
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a   = Object.assign(document.createElement('a'), {
       href: url, download: `opt_${sym.replace('/', '')}_${tf}_${Date.now()}.json`,
