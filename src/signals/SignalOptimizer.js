@@ -885,7 +885,7 @@ function pass4WalkForward(bars, candidates, opts = {}) {
  */
 const SQS_THRESHOLDS = [0, 35, 40, 45, 50, 55, 60, 65, 70];
 
-function pass5SQSThreshold(bars, baseStrategy, baseFees, minTrades) {
+async function pass5SQSThreshold(bars, baseStrategy, baseFees, minTrades, progressCb, abortFn) {
   const trainBars = bars.slice(0, Math.floor(bars.length * 0.70));
   const splitIdx  = Math.floor(bars.length * 0.70);
   const oosBars   = bars.slice(splitIdx);
@@ -896,7 +896,14 @@ function pass5SQSThreshold(bars, baseStrategy, baseFees, minTrades) {
   let bestScore    = -Infinity;
   const sqsResults = [];
 
-  for (const minSQS of SQS_THRESHOLDS) {
+  for (let i = 0; i < SQS_THRESHOLDS.length; i++) {
+    if (abortFn?.()) break;
+    const minSQS = SQS_THRESHOLDS[i];
+
+    // Report progress before each threshold so the UI updates
+    if (progressCb) progressCb({ phase: 5, tested: i, total: SQS_THRESHOLDS.length });
+    await yieldUI();
+
     const edgeCache = new EdgeCache();
     const qOpts     = minSQS === 0
       ? {}                                   // 0 = disable SQS gate
@@ -922,6 +929,9 @@ function pass5SQSThreshold(bars, baseStrategy, baseFees, minTrades) {
       }
     } catch (_) { /* skip */}
   }
+
+  // Final progress update
+  if (progressCb) progressCb({ phase: 5, tested: SQS_THRESHOLDS.length, total: SQS_THRESHOLDS.length });
 
   return { bestSQS, bestScore, sqsResults };
 }
@@ -1626,7 +1636,7 @@ export async function optimizeStrategyAsync(bars, strategy, opts = {}) {
   const bestForSQS = topResults[0];
   let p5Result = null;
   if (bestForSQS && !aborted()) {
-    p5Result = pass5SQSThreshold(bars, bestForSQS.strategy, baseFees, 4);
+    p5Result = await pass5SQSThreshold(bars, bestForSQS.strategy, baseFees, 4, progressCb, aborted);
   }
 
   // Pass 6 — ensemble blend (reporting-only, never auto-promotes over individuals)
