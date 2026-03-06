@@ -1,0 +1,387 @@
+import { bisectByT } from "../util/bisect.js";
+import { clamp } from "../util/math.js";
+
+export class InteractionEngine {
+  constructor(canvas, state, undo, onRender, setStatus) {
+    this.canvas = canvas;
+    this.state = state;
+    this.undo = undo;
+    this.onRender = onRender;
+    this.setStatus = setStatus;
+
+    this.isPanning = false;
+    this.panLastX = 0;
+    this._requestOlder = null;
+  }
+
+  setLeftLoadHook(fn) { this._requestOlder = fn; }
+
+  attach() {
+    const c = this.canvas;
+
+    c.addEventListener("mousedown", (e) => {
+      const rect = c.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // 1) hit-test position handles (stop/tp)
+      const ph = this.hitPositionHandle(x,y);
+      if (ph) {
+        this.beginDragPositionHandle(ph);
+        return;
+      }
+
+      // 2) marker hit-test
+      const hit = this.hitMarker(x, y);
+      if (hit) {
+        this.beginDragMarker(hit);
+        return;
+      }
+
+      // else pan
+      this.isPanning = true;
+      this.panLastX = x;
+    });
+
+    c.addEventListener("mousemove", (e) => {
+      const rect = c.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      let [t0, t1] = this.state.xDomain;
+      const span = t1 - t0;
+
+      this.state.cursorT = t0 + (x / rect.width) * span;
+
+      if (this.state.dragging.active) {
+        if (this.state.dragging.type === "marker") {
+          this.dragMarkerToXY(x, y, rect.width);
+          this.onRender();
+          return;
+        }
+        if (this.state.dragging.type === "stop" || this.state.dragging.type === "tp") {
+          this.dragPositionHandleToY(y);
+          this.onRender();
+          return;
+        }
+      }
+
+      if (this.isPanning) {
+        const dx = x - this.panLastX;
+        const speed = e.shiftKey ? 2.25 : 1.0;
+        const dt = -(dx / rect.width) * span * speed;
+
+        t0 = t0 + dt;
+        t1 = t1 + dt;
+
+        // replay clamp vs loaded window max
+        if (this.state.replay.enabled && this.state.replay.index != null && this.state.bars.length) {
+          const maxT = this.state.bars[this.state.bars.length - 1].t;
+          if (t1 > maxT) { t0 -= (t1 - maxT); t1 = maxT; }
+        }
+
+        this.state.xDomain = [t0, t1];
+        this.panLastX = x;
+
+        if (this._requestOlder && x < (this.state.limits.leftLoadThresholdPx || 140)) {
+          this._requestOlder();
+        }
+
+        this.onRender();
+        return;
+      }
+
+      this.onRender();
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (this.state.dragging.active) this.endDrag();
+      this.isPanning = false;
+    });
+
+    c.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const rect = c.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+
+      let [t0, t1] = this.state.xDomain;
+      const span = t1 - t0;
+
+      const mag = Math.min(100, Math.abs(e.deltaY));
+      const zoomStep = 0.04 + (mag / 100) * 0.10;
+      const dir = Math.sign(e.deltaY);
+      const factor = 1 + dir * zoomStep;
+
+      let newSpan = span * factor;
+      newSpan = clamp(newSpan, this.state.limits.minSpanMs, this.state.limits.maxSpanMs);
+
+      const anchor = t0 + (x / rect.width) * span;
+      const leftFrac = (anchor - t0) / span;
+      const rightFrac = (t1 - anchor) / span;
+
+      t0 = anchor - newSpan * leftFrac;
+      t1 = anchor + newSpan * rightFrac;
+
+      if (this.state.replay.enabled && this.state.replay.index != null && this.state.bars.length) {
+        const maxT = this.state.bars[this.state.bars.length - 1].t;
+        if (t1 > maxT) { t0 -= (t1 - maxT); t1 = maxT; }
+      }
+
+      this.state.xDomain = [t0, t1];
+      this.onRender();
+    }, { passive: false });
+
+    // keyboard
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "m" || e.key === "M") this.addMarkerAtCursor("lane", "buy");
+      if (e.key === "n" || e.key === "N") this.addMarkerAtCursor("lane", "sell");
+      if (e.key === "p" || e.key === "P") this.addMarkerAtCursor("price", "buy");
+      if (e.key === "o" || e.key === "O") this.toggleSelectedMarkerPane();
+      if (e.key === "k" || e.key === "K") {
+        if (this.state.replay.enabled) {
+          this.state.replay.labelLock = !this.state.replay.labelLock;
+          this.setStatus(`Replay LabelLock ${this.state.replay.labelLock?"ON":"OFF"}`);
+          this.onRender();
+        }
+      }
+    });
+
+    // click selects marker OR position if close to handle
+    c.addEventListener("click", (e) => {
+      const rect = c.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      const ph = this.hitPositionHandle(x,y);
+      if (ph) {
+        this.state.selectedPositionId = ph.pos.id;
+        this.setStatus(`Selected position ${ph.pos.id}`);
+        this.onRender();
+        return;
+      }
+
+      const hit = this.hitMarker(x,y);
+      if (hit) {
+        this.state.selectedMarkerId = hit.id;
+        this.setStatus(`Selected marker ${hit.kind} (${hit.pane})`);
+        this.onRender();
+      }
+    });
+  }
+
+  hitMarker(x, y) {
+    for (const m of this.state.markers) {
+      if (m._screenX == null) continue;
+      const dx = x - m._screenX;
+      const dy = y - m._screenY;
+      if (Math.sqrt(dx * dx + dy * dy) <= 10) return m;
+    }
+    return null;
+  }
+
+  hitPositionHandle(x,y){
+    for (const p of this.state.positions) {
+      if (!p._handles) continue;
+      for (const key of ["stop","tp"]) {
+        const h = p._handles[key];
+        if (!h) continue;
+        const dx = x - h.x;
+        const dy = y - h.y;
+        if (Math.sqrt(dx*dx + dy*dy) <= (h.r||8)) {
+          return { pos:p, key };
+        }
+      }
+    }
+    return null;
+  }
+
+  beginDragMarker(marker) {
+    this.state.dragging = {
+      active: true,
+      type: "marker",
+      id: marker.id,
+      start: { t: marker.t, kind: marker.kind, pane: marker.pane, price: marker.price ?? null }
+    };
+    this.setStatus(`Dragging ${marker.kind} (${marker.pane})…`);
+  }
+
+  beginDragPositionHandle({pos,key}){
+    this.state.selectedPositionId = pos.id;
+    this.state.dragging = {
+      active: true,
+      type: key,      // "stop" or "tp"
+      id: pos.id,
+      start: { stop: pos.stop ?? null, tp: pos.tp ?? null }
+    };
+    this.setStatus(`Dragging ${key.toUpperCase()}…`);
+  }
+
+  dragPositionHandleToY(y){
+    const ps = this.state._priceScale;
+    const panes = this.state._panes;
+    if (!ps || !panes) return;
+    const pane = panes.price;
+    if (y < pane.y || y > pane.y+pane.h) return;
+
+    const price = ps.pixToY(y);
+    const p = this.state.positions.find(pp => pp.id === this.state.dragging.id);
+    if (!p) return;
+
+    if (this.state.dragging.type === "stop") p.stop = price;
+    if (this.state.dragging.type === "tp") p.tp = price;
+  }
+
+  dragMarkerToXY(x, y, width) {
+    const m = this.state.markers.find(mm => mm.id === this.state.dragging.id);
+    if (!m) return;
+
+    const [t0, t1] = this.state.xDomain;
+    const t = t0 + (x / width) * (t1 - t0);
+
+    const i = clamp(bisectByT(this.state.bars, t), 0, this.state.bars.length - 1);
+    const bar = this.state.bars[i];
+    if (!bar) return;
+
+    m.t = bar.t;
+
+    if (m.pane === "price" && this.state._priceScale && this.state._panes) {
+      const pane = this.state._panes.price;
+      const ps = this.state._priceScale;
+      const inPriceY = (y >= pane.y - 10 && y <= pane.y + pane.h + 10);
+
+      if (inPriceY) {
+        const raw = ps.pixToY(y);
+        const mode = this.state.settings.snapPriceMode || "OHLC";
+        if (mode === "FREE") m.price = raw;
+        else if (mode === "CLOSE") m.price = bar.c;
+        else {
+          const candidates = [bar.o, bar.h, bar.l, bar.c];
+          let best = candidates[0], bestD = Math.abs(raw - candidates[0]);
+          for (const v of candidates) {
+            const d = Math.abs(raw - v);
+            if (d < bestD) { best = v; bestD = d; }
+          }
+          m.price = best;
+        }
+      } else {
+        m.price = bar.c;
+      }
+    }
+  }
+
+  endDrag(){
+    const drag = this.state.dragging;
+
+    // Marker commit to undo stack
+    if (drag.type === "marker") {
+      const m = this.state.markers.find(mm => mm.id === drag.id);
+      if (!m) { this.state.dragging.active=false; return; }
+
+      const from = drag.start;
+      const to = { t: m.t, kind: m.kind, pane: m.pane, price: m.price ?? null };
+
+      const edit = {
+        ts: Date.now(),
+        symbol: this.state.symbol,
+        timeframe: this.state.timeframe,
+        markerId: m.id,
+        fromT: from.t,
+        toT: to.t,
+        kind: m.kind,
+        pane: m.pane,
+        fromPrice: from.price,
+        toPrice: to.price,
+      };
+
+      this.undo.push({
+        label: "Move marker",
+        do: () => {
+          m.t = to.t;
+          if (to.price != null) m.price = to.price; else delete m.price;
+          this.state.labelEdits.push(edit);
+        },
+        undo: () => {
+          m.t = from.t;
+          if (from.price != null) m.price = from.price; else delete m.price;
+          this.state.labelEdits = this.state.labelEdits.filter(e => e !== edit);
+        }
+      });
+
+      this.setStatus("Marker moved (snap). Edit logged.");
+    }
+
+    // Stop/TP commit
+    if (drag.type === "stop" || drag.type === "tp") {
+      const p = this.state.positions.find(pp => pp.id === drag.id);
+      if (p) {
+        const from = drag.start;
+        const toStop = p.stop ?? null;
+        const toTp = p.tp ?? null;
+
+        this.undo.push({
+          label: `Adjust ${drag.type.toUpperCase()}`,
+          do: () => { p.stop = toStop; p.tp = toTp; },
+          undo: () => { p.stop = from.stop; p.tp = from.tp; }
+        });
+
+        this.setStatus(`${drag.type.toUpperCase()} adjusted.`);
+      }
+    }
+
+    this.state.dragging.active = false;
+    this.state.dragging.type = null;
+    this.state.dragging.id = null;
+    this.state.dragging.start = null;
+    this.onRender();
+  }
+
+  addMarkerAtCursor(pane, kind) {
+    if (!this.state.bars.length) return;
+    const t = this.state.cursorT ?? this.state.bars[this.state.bars.length - 1].t;
+    const i = clamp(bisectByT(this.state.bars, t), 0, this.state.bars.length - 1);
+    const bar = this.state.bars[i];
+    if (!bar) return;
+
+    const m = { id: `u_${Date.now()}`, t: bar.t, kind, pane };
+    if (pane === "price") m.price = bar.c;
+
+    this.undo.push({
+      label: "Add marker",
+      do: () => this.state.markers.push(m),
+      undo: () => { this.state.markers = this.state.markers.filter(mm => mm.id !== m.id); }
+    });
+
+    this.setStatus(`Added ${kind} marker (${pane}).`);
+  }
+
+  toggleSelectedMarkerPane() {
+    const id = this.state.selectedMarkerId;
+    if (!id) return;
+
+    const m = this.state.markers.find(mm => mm.id === id);
+    if (!m) return;
+
+    const fromPane = m.pane;
+    const toPane = (fromPane === "lane") ? "price" : "lane";
+    const fromPrice = m.price ?? null;
+
+    this.undo.push({
+      label: "Toggle marker pane",
+      do: () => {
+        m.pane = toPane;
+        if (toPane === "price") {
+          const idx = clamp(bisectByT(this.state.bars, m.t), 0, this.state.bars.length - 1);
+          m.price = this.state.bars[idx]?.c ?? m.price ?? 0;
+        } else {
+          delete m.price;
+        }
+      },
+      undo: () => {
+        m.pane = fromPane;
+        if (fromPrice != null) m.price = fromPrice; else delete m.price;
+      }
+    });
+
+    this.setStatus(`Marker pane: ${toPane}`);
+  }
+}

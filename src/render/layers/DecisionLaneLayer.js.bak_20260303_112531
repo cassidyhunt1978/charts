@@ -1,0 +1,67 @@
+const STAGES = [
+  { key:"symbol",      label:"1 Symbol",      color:"#60a5fa" },
+  { key:"strategy",    label:"2 Strategy",    color:"#a78bfa" },
+  { key:"trust",       label:"3 Trust",       color:"#22c55e" },
+  { key:"regime",      label:"4 Regime",      color:"#eab308" },
+  { key:"ai",          label:"5 AI",          color:"#38bdf8" },
+  { key:"ensemble",    label:"6 Ensemble",    color:"#34d399" },
+  { key:"accounting",  label:"7 P&L",         color:"#fb7185" },
+  { key:"goals",       label:"8 Goals",       color:"#f97316" },
+];
+
+export class DecisionLaneLayer {
+  draw(ctx, scene) {
+    const pane = scene.panes.lane;
+    const [t0,t1] = scene.xDomain;
+    const tToX = (t) => pane.x + ((t - t0) * pane.w) / (t1 - t0);
+
+    // lane grid
+    const rowH = pane.h / STAGES.length;
+    ctx.font = "10px system-ui";
+    for (let i=0;i<STAGES.length;i++){
+      const y = pane.y + i*rowH;
+      ctx.strokeStyle = "rgba(148,163,184,.08)";
+      ctx.beginPath();
+      ctx.moveTo(pane.x, y);
+      ctx.lineTo(pane.x+pane.w, y);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(148,163,184,.55)";
+      ctx.fillText(STAGES[i].label, pane.x+6, y + rowH*0.72);
+    }
+
+    // events as dots on their stage row
+    for (const e of scene.events) {
+      if (e.t < t0 || e.t > t1) continue;
+      const idx = Math.max(0, STAGES.findIndex(s=>s.key===e.stage));
+      const row = (idx >= 0) ? idx : 0;
+      const x = tToX(e.t);
+      const y = pane.y + row*rowH + rowH*0.5;
+
+      const stage = STAGES[row] || STAGES[0];
+      ctx.fillStyle = stage.color;
+      ctx.beginPath();
+      ctx.arc(x, y, 3.5, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // editable markers as larger dots near bottom (still easy to grab)
+    const my = pane.y + pane.h - rowH*0.5;
+    for (const m of scene.markers) {
+      if (m.pane !== "lane") continue;
+      if (m.t < t0 || m.t > t1) continue;
+      const x = tToX(m.t);
+
+      m._screenX = x;
+      m._screenY = my;
+      m._screenPane = "lane";
+
+      ctx.fillStyle = m.kind === "buy" ? "#22c55e" : "#ef4444";
+      ctx.beginPath();
+      ctx.arc(x, my, 6, 0, Math.PI*2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,.35)";
+      ctx.stroke();
+    }
+  }
+}

@@ -1,0 +1,123 @@
+import { createState } from "./State.js";
+import { DataEngine } from "../data/DataEngine.js";
+import { LayoutEngine } from "../layout/LayoutEngine.js";
+import { Renderer } from "../render/Renderer.js";
+import { InteractionEngine } from "../interaction/InteractionEngine.js";
+import { ReplayController } from "../replay/ReplayController.js";
+import { UndoStack } from "../interaction/UndoStack.js";
+import { LabelExporter } from "../export/LabelExporter.js";
+
+export class Engine {
+  constructor(canvas, hudEl, statusEl, config) {
+    this.canvas = canvas;
+    this.hudEl = hudEl;
+    this.statusEl = statusEl;
+    this.ctx = canvas.getContext("2d", { alpha: false });
+
+    this.state = createState();
+
+    this.data = new DataEngine(config.provider, this.state);
+    this.layout = new LayoutEngine(this.state);
+    this.renderer = new Renderer(this.ctx, this.state, this.hudEl);
+
+    this.undo = new UndoStack(this.state, () => this.render());
+    this.exporter = new LabelExporter(this.state);
+
+    this.replay = new ReplayController(
+      this.state,
+      () => this.render(),
+      (msg) => this.setStatus(msg)
+    );
+
+    // Create interaction first
+    this.interaction = new InteractionEngine(
+      this.canvas,
+      this.state,
+      this.undo,
+      () => this.render(),
+      (msg) => this.setStatus(msg)
+    );
+
+    // Infinite left-load hook (DataEngine incremental reveal demo)
+    this.interaction.setLeftLoadHook(() => {
+      if (this.data.canLoadOlder && this.data.canLoadOlder()) {
+        const ok = this.data.loadOlderChunk(1500);
+        if (ok) {
+          const after = this.state.bars[0]?.t;
+          this.setStatus(`Loaded older history. Oldest: ${new Date(after).toLocaleString()}`);
+          this.render();
+        }
+      }
+    });
+
+    this._raf = 0;
+  }
+
+  async start() {
+    await this.data.loadInitial();
+
+    this.resize();
+    window.addEventListener("resize", () => this.resize());
+
+    this.interaction.attach();
+    this.render();
+    this.loop();
+  }
+
+  loop() {
+    const tick = (ts) => {
+      this.replay.tick(ts);
+      this._raf = requestAnimationFrame(tick);
+    };
+    this._raf = requestAnimationFrame(tick);
+  }
+
+  setStatus(msg) {
+    if (this.statusEl) this.statusEl.textContent = msg;
+  }
+
+  resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this.canvas.getBoundingClientRect();
+    this.canvas.width = Math.floor(rect.width * dpr);
+    this.canvas.height = Math.floor(rect.height * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.render();
+  }
+
+  resetView() {
+    const bars = this.state.bars;
+    if (!bars.length) return;
+    const n = bars.length;
+    const lookback = Math.min(500, n);
+    this.state.xDomain = [bars[n - lookback].t, bars[n - 1].t];
+    this.render();
+  }
+
+  zoomBy(factor) {
+    const [t0, t1] = this.state.xDomain;
+    const span = t1 - t0;
+    if (span <= 0) return;
+
+    const anchor = (t0 + t1) * 0.5; // center zoom
+    let newSpan = span * factor;
+
+    const min = this.state.limits.minSpanMs;
+    const max = this.state.limits.maxSpanMs;
+    if (newSpan < min) newSpan = min;
+    if (newSpan > max) newSpan = max;
+
+    const newT0 = anchor - newSpan * 0.5;
+    const newT1 = anchor + newSpan * 0.5;
+    this.state.xDomain = [newT0, newT1];
+    this.render();
+  }
+
+  zoomIn() { this.zoomBy(0.85); }
+  zoomOut() { this.zoomBy(1.18); }
+
+  render() {
+    const scene = this.layout.computeScene(this.canvas);
+    this.renderer.draw(scene);
+  }
+}

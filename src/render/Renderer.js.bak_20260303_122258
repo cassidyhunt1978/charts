@@ -1,0 +1,41 @@
+import { GridLayer } from "./layers/GridLayer.js";
+import { DecisionLaneLayer } from "./layers/DecisionLaneLayer.js";
+import { CandlesLayer } from "./layers/CandlesLayer.js";
+import { PositionsLayer } from "./layers/PositionsLayer.js";
+import { MarkersLayer } from "./layers/MarkersLayer.js";
+import { SpreadLayer } from "./layers/SpreadLayer.js";
+import { MACDLayer } from "./layers/MACDLayer.js";
+import { CrosshairLayer } from "./layers/CrosshairLayer.js";
+import { HUDLayer } from "./layers/HUDLayer.js";
+
+export class Renderer {
+  constructor(ctx, state, legendEl) {
+    this.ctx = ctx;
+    this.state = state;
+    this.legendEl = legendEl;
+
+    this.layers = [
+      new GridLayer(),
+      new DecisionLaneLayer(),
+      new CandlesLayer(),
+      new PositionsLayer(),
+      new MarkersLayer(),
+      new SpreadLayer(),
+      new MACDLayer(),
+      new CrosshairLayer(),
+      new HUDLayer(this.legendEl),
+    ];
+  }
+
+  draw(scene) {
+    const ctx = this.ctx;
+    ctx.fillStyle = "#0b0f17";
+    ctx.fillRect(0, 0, scene.W, scene.H);
+
+    for (const layer of this.layers) layer.draw(ctx, scene);
+
+    // feed back to interaction
+    this.state._panes = scene.panes;
+    if (scene._priceScale) this.state._priceScale = scene._priceScale;
+  }
+}

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#131722" />
+  <title>MarketMind Terminal</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="shell">
+    <div id="app">
+
+      <!-- ── TOOLBAR ───────────────────────────────────────── -->
+      <div id="toolbar">
+
+        <!-- Collapse toggle (compact mode) -->
+        <button id="tbCollapse" class="btn btn-icon tb-collapse-btn" title="Compact mode (Ctrl+\)">
+          <svg width="12" height="10" viewBox="0 0 12 10" fill="none" stroke="currentColor" stroke-width="1.8">
+            <line x1="1" y1="2" x2="11" y2="2"/><line x1="1" y1="5" x2="11" y2="5"/><line x1="1" y1="8" x2="11" y2="8"/>
+          </svg>
+        </button>
+
+        <!-- Brand -->
+        <div class="tb-brand">
+          <span class="badge"></span>
+          <span class="title tb-hide-compact">MarketMind</span>
+        </div>
+
+        <div class="tb-sep tb-hide-compact"></div>
+
+        <!-- Symbol + history depth -->
+        <select id="symbolSelect" class="tb-select" title="Active symbol"></select>
+        <select id="daysSelect"   class="tb-select tb-hide-compact" title="History depth">
+          <option value="7">7d</option>
+          <option value="14">14d</option>
+          <option value="30" selected>30d</option>
+          <option value="60">60d</option>
+          <option value="90">90d</option>
+          <option value="180">180d</option>
+          <option value="270">270d</option>
+          <option value="300">All (~10mo)</option>
+        </select>
+
+        <div class="tb-sep"></div>
+
+        <!-- Timeframe buttons -->
+        <div class="iv-group" id="ivGroup">
+          <button class="btn" data-iv="1m">1m</button>
+          <button class="btn" data-iv="5m">5m</button>
+          <button class="btn active" data-iv="15m">15m</button>
+          <button class="btn" data-iv="1h">1h</button>
+          <button class="btn" data-iv="4h">4h</button>
+          <button class="btn" data-iv="1D">1D</button>
+        </div>
+
+        <div class="tb-sep tb-hide-compact"></div>
+
+        <!-- Zoom (hidden in compact) -->
+        <button id="zoomOut"   class="btn btn-icon tb-hide-compact" title="Zoom out (-)">&#8722;</button>
+        <button id="zoomIn"    class="btn btn-icon tb-hide-compact" title="Zoom in (+)">+</button>
+        <button id="resetView" class="btn         tb-hide-compact" title="Reset view (0)">Reset</button>
+
+        <div class="tb-sep"></div>
+
+        <!-- ⚙ Tools dropdown — all secondary features in one organised panel -->
+        <div class="tb-dropdown-wrap" id="toolsWrap">
+          <button id="toolsBtn" class="btn" title="All tools &amp; features">
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6">
+              <circle cx="7" cy="7" r="2.5"/>
+              <path d="M7 1v1.5M7 11.5V13M1 7h1.5M11.5 7H13M2.9 2.9l1.1 1.1M10 10l1.1 1.1M2.9 11.1L4 10M10 4l1.1-1.1"/>
+            </svg>
+            <span class="tb-hide-compact">Tools</span>
+            <svg class="tb-hide-compact" width="7" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M0 0l4 5 4-5z"/></svg>
+          </button>
+
+          <!-- Tools panel (toggled by JS) -->
+          <div id="toolsDropdown" class="tools-dropdown" hidden>
+
+            <div class="tools-section">
+              <div class="tools-sec-label">Signals</div>
+              <div class="tools-grid">
+                <button id="autoSignalsBtn"  class="btn btn-accent" title="Auto-place swing HL signals">Auto HL</button>
+                <button id="clearSignalsBtn" class="btn btn-danger"  title="Remove all signals">Clear Sigs</button>
+              </div>
+            </div>
+
+            <div class="tools-section">
+              <div class="tools-sec-label">Drawing</div>
+              <div class="tools-grid">
+                <button id="hlineBtn"         class="btn" title="Horizontal line (H)">H-Line</button>
+                <button id="trendlineBtn"     class="btn" title="Trendline (T)">Trend</button>
+                <button id="clearDrawingsBtn" class="btn btn-danger" title="Clear all drawings">&#10005; Draw</button>
+              </div>
+            </div>
+
+            <div class="tools-section">
+              <div class="tools-sec-label">Indicators</div>
+              <div class="tools-grid">
+                <button id="rsiToggle"  class="btn" title="RSI pane">RSI</button>
+                <button id="bbToggle"   class="btn" title="Bollinger Bands">BB</button>
+                <button id="vwapToggle" class="btn" title="VWAP">VWAP</button>
+                <button id="vpvrToggle" class="btn" title="Volume Profile (VPVR)">VPVR</button>
+                <button id="smcToggle"  class="btn" title="Smart Money Concepts">SMC</button>
+              </div>
+            </div>
+
+            <div class="tools-section">
+              <div class="tools-sec-label">Analysis</div>
+              <div class="tools-grid">
+                <button id="signalRulesBtn" class="btn btn-accent" title="Build &amp; backtest signal rules — export to Python">⚡ Signals</button>
+                <button id="optimizerBtn"   class="btn btn-accent" title="Full strategy optimizer — 8-pass search across all TFs + pivots">⚙ Optimizer</button>
+                <button id="mtfBtn"  class="btn" title="Multi-Timeframe Confluence">MTF</button>
+                <button id="riskBtn" class="btn" title="Risk / Position Size">Risk Calc</button>
+              </div>
+            </div>
+
+            <div class="tools-section">
+              <div class="tools-sec-label">Replay</div>
+              <div class="tools-grid">
+                <button id="replayToggle" class="btn" title="Toggle replay mode">
+                  <svg width="8" height="9" viewBox="0 0 9 10" fill="currentColor"><path d="M1 1 L8 5 L1 9 Z"/></svg>
+                  Play
+                </button>
+                <button id="stepForward" class="btn btn-icon" title="Step one bar forward">
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor"><path d="M1 1.5 L7 6 L1 10.5 Z"/><rect x="8.5" y="1.5" width="2.5" height="9" rx="1"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="tools-section">
+              <div class="tools-sec-label">Data &amp; Reports</div>
+              <div class="tools-grid">
+                <button id="watchlistBtn" class="btn"            title="Watchlist sidebar">Watchlist</button>
+                <button id="hudToggle"    class="btn"            title="Toggle HUD strip">HUD</button>
+                <button id="statsBtn"     class="btn btn-accent" title="P&amp;L stats">Stats</button>
+                <button id="backtestBtn"  class="btn btn-accent" title="Run backtest">Backtest</button>
+                <button id="journalBtn"   class="btn btn-accent" title="Trade journal">Journal</button>
+                <button id="alertsBtn"    class="btn btn-accent" title="Price alerts">Alerts</button>
+                <button id="exportBtn"    class="btn btn-accent" title="Export labels for AI">Export AI</button>
+              </div>
+            </div>
+
+          </div><!-- /toolsDropdown -->
+        </div><!-- /toolsWrap -->
+
+        <!-- Flexible gap -->
+        <div class="tb-spacer"></div>
+
+        <!-- Live indicator -->
+        <div id="livePulse" class="live-pulse" title="Live stream active">
+          <span class="lp-dot"></span>
+          <span class="lp-label tb-hide-compact">LIVE</span>
+        </div>
+        <button id="streamBtn" class="btn tb-hide-compact" title="Toggle live stream">Stream</button>
+
+        <div class="tb-sep"></div>
+        <span id="status" class="status"></span>
+        <div class="tb-sep"></div>
+
+        <!-- Command palette -->
+        <button id="cmdPaletteBtn" class="btn btn-icon" title="Command palette (Ctrl+P)">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="6" cy="6" r="4.5"/><line x1="9.5" y1="9.5" x2="13" y2="13"/>
+          </svg>
+        </button>
+
+      </div>
+      <!-- /TOOLBAR -->
+
+      <!-- ── DATA STRIP (HUD) ──────────────────────────────── -->
+      <div id="hud">
+        <div id="legend"></div>
+      </div>
+
+      <!-- ── MAIN CONTENT ───────────────────────────────────── -->
+      <div id="main-content">
+        <!-- Watchlist sidebar -->
+        <div id="watchlist"></div>
+
+        <!-- Chart area -->
+        <div id="chartWrap">
+          <canvas id="canvas"></canvas>
+          <!-- Live Tape overlay -->
+          <div id="live-tape" class="live-tape-panel"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── COMMAND PALETTE ───────────────────────────────────── -->
+  <div id="cmd-palette" class="cmd-palette" aria-hidden="true">
+    <div class="cmd-inner">
+      <input id="cmd-search" class="cmd-search" type="text" placeholder="Type a command&hellip;" autocomplete="off" spellcheck="false" />
+      <div id="cmd-list" class="cmd-list"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
