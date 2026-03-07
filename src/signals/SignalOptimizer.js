@@ -1701,6 +1701,22 @@ export async function optimizeStrategyAsync(bars, strategy, opts = {}) {
   ).length;
   console.log('[Optimizer] Condition usage across top-50 results:', _condFreq);
   console.log(`[Optimizer] Strategies using VWAP/volume/ADX/ATR (diverse): ${_diverseInTop50}/${top50.length}`);
+  // Debug: trust-factor proxy (PF × WR/100) for every result in top-20
+  console.log('Evaluated strategies:', topResults.slice(0, 20).map(r => {
+    const pf = r.stats?.profit_factor ?? 0;
+    const wr = r.stats?.win_rate ?? 0;
+    const tr = r.stats?.total_trades ?? 0;
+    const div = r.strategy?.entry?.conditions?.filter(c => DIVERSE_COND_IDS.has(c.id)).map(c => c.id) ?? [];
+    return {
+      name:   r.strategy?.meta?.name ?? 'unnamed',
+      score:  +r.score.toFixed(4),
+      pf:     +pf.toFixed(3),
+      wr:     +wr.toFixed(1),
+      trades: tr,
+      trust:  +(pf * (wr / 100)).toFixed(4),
+      diverse: div,
+    };
+  }));
 
   const elapsed = (performance.now() - t0).toFixed(0);
   return {
