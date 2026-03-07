@@ -138,6 +138,7 @@ export class Engine {
     this._strategyOverlay = new StrategyOverlay();
     this._strategyOverlay.onUpdate = () => {
       this.state.bgStrategySignals = this._strategyOverlay.getMergedSignals();
+      this._updateStrategyOverlayPanel();
       this.render();
     };
 
@@ -931,6 +932,52 @@ export class Engine {
     this._strategyOverlay.load(bars).catch(err =>
       console.warn('[Engine] Background strategy load failed:', err.message)
     );
+  }
+
+  /**
+   * Populate the #stratOverlayList panel in the chart toolbar with one
+   * checkbox row per loaded background strategy.  Called by the
+   * _strategyOverlay.onUpdate callback after signals are (re)computed.
+   */
+  _updateStrategyOverlayPanel() {
+    const section = document.getElementById('stratOverlaySection');
+    const list    = document.getElementById('stratOverlayList');
+    if (!section || !list) return;
+
+    const strategies = this._strategyOverlay.strategies;
+    if (!strategies || strategies.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = '';
+    list.innerHTML = '';
+
+    for (const s of strategies) {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;padding:2px 4px;border-radius:3px;';
+      row.title = s.strategy_name ?? String(s.id);
+
+      const cb = document.createElement('input');
+      cb.type    = 'checkbox';
+      cb.checked = s.enabled !== false;
+      cb.dataset.stratId = s.id;
+      cb.addEventListener('change', () => {
+        this._strategyOverlay.toggle(s.id);
+        this.state.bgStrategySignals = this._strategyOverlay.getMergedSignals();
+        this.render();
+      });
+
+      const dot = document.createElement('span');
+      dot.style.cssText = `width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${s.colour ?? '#888'};`;
+
+      const lbl = document.createElement('span');
+      lbl.textContent = s.strategy_name ?? s.name ?? String(s.id);
+      lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
+
+      row.append(cb, dot, lbl);
+      list.appendChild(row);
+    }
   }
 
   /** POST a strategy to the trading app DB; called from SignalRuleEditor + OptimizerPanel */
